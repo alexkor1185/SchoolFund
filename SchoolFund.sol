@@ -3,7 +3,11 @@
 
 pragma solidity ^0.4.17;
 
-# https://github.com/ethereum/go-ethereum/wiki/Contract-Tutorial
+// Parents can:
+// 1. announce ballots (sets of proposals on how to spend the money
+// 2. donate and vote (as a single step. Vote weight is proportional to the sum donated.)
+
+//# https://github.com/ethereum/go-ethereum/wiki/Contract-Tutorial
 
 /**
  * Mortal ancestor provides a valid way for the contract owner to destroy it to free Ethereum blockchain.
@@ -12,15 +16,15 @@ contract Mortal
 {
    address public owner;
 
-   function mortal()
+   function Mortal() internal
    {
       owner = msg.sender;
    }
 
-   function kill()
+   function kill() internal
    {
       if (msg.sender == owner)
-         suicide(owner);
+         selfdestruct(owner);
    }
 }
 
@@ -30,131 +34,100 @@ contract Mortal
 /// @title School Charity Fund
 contract SchoolCharityFund is Mortal
 {
-   // Parent can invest and vote for the way how the money shall be spent
-   struct Parent
-   {
-      address parent;
-      uint donated; // for info only
-      uint weight; vote weight = donated / totalFundBudget;
-      uint vote;  
-   }
+   // all parents will be notified as soon as a new ballot is announced
+   event EventNewBallotAnnounced(bytes32[] proposalUIDs, bytes32[] descriptions, uint[] costs);
 
    // Proposal on how to spend the money
    struct Proposal
    {
-      uint32 uid; // globally unique ID of the proposal
-      bytes256 description;
+      bytes32 uid; // globally unique ID of the proposal
+      bytes32 description;
+      uint cost;
       uint voteCount;
    }
 
-   // remember the history of every ballot
-   mapping(Proposal => mapping(address => Voter)) public ballots;
-
-   // remember voters: we cannot calculate weights until all voters stop voting for the given proposal
-   mapping(uint32 => address[]) private proposalsToParents;
-
-   // remember who voted for what
-   mapping(address => uint32[]) private parentsToProposals;
-
-   // here is the list of all expenditure proposals
-   Proposal[] public proposals;
-
-   // raise another ballot and notify the parents
-   function InitNewBallot(bytes32[] proposalNames, mapping(bytes32 => bytes32) descriptions)
+   struct Ballot
    {
-      // any parent can raise the ballot, not only the Charity Fund owner
-      // require(msg.sender == owner);
-
-      // remember all proposals
-      for (uint i = 0; i < proposalNames.length; i++)
-          proposals.push(Proposal({name: proposalNames[i], description: descriptions[proposalNames[i]], voteCount: 0}));
+      // here is the list of all expenditure proposals
+      mapping(bytes32 => Proposal) proposals;
       
-      // notify all known parents about this new Ballot
-      // <to be added>
+      // remember proposal UIDs (there is no way to get mapping keys otherwise)
+      bytes32[] UIDs;
+
+      // remember the votes
+      mapping(address => bytes32) votes;
+
+      // remember voters (there is no way to get mapping keys otherwise)
+      address[] voters;
    }
 
-   // Total fund budget - sum of all money ever contributed. Only increases.
+   Ballot private ballot;
+
+   // raise another ballot and notify the parents
+   function InitNewBallot(bytes32[] proposalUIDs, bytes32[] descriptions, uint[] costs) public
+   {
+      // this is commented on purpose: any parent can raise the ballot, not only the School Fund owner
+      // require(msg.sender == owner);
+
+      Ballot storage newBallot;
+
+      // remember all proposals
+      for (uint i = 0; i < proposalUIDs.length; i++)
+      {
+          newBallot.proposals[proposalUIDs[i]] = Proposal({uid: proposalUIDs[i], description: descriptions[i], cost: costs[i], voteCount: 0});
+          newBallot.UIDs.push(proposalUIDs[i]);
+      }      
+
+      // replace old ballot
+      ballot = newBallot;
+
+      // notify all known parents about this new Ballot
+      EventNewBallotAnnounced(proposalUIDs, descriptions, costs);
+   }
+
+
+   // total individual contributions - sum of all money ever contributed. Only increases.
+   mapping (address => uint) public balances;
+
+   // total fund budget - sum of all money ever contributed. Only increases.
    uint totalFundBudget;
 
-   // Every Parent can donate some funds an vote with the weight 
-   // that is proportional to the total amount of money she ever contributed. 
-   function DonateAndVote(uint32 proposalUID, uint amount)
+   // Every Parent can donate some funds an vote with the weight that is proportional to the total amount of money she ever contributed. 
+   // It is possible to vote several times or even for various proposals within the same ballot. 
+   function DonateAndVote(bytes32 proposalUID, uint amount) public
    { 
-      // it is possible to vote several times only for the same Proposal
-      require((parentsToProposals[msg.sender][proposalUID] == 0) || (parentsToProposals[msg.sender][proposalUID] == ));
+      // verify that provided Proposal UID actually exists in the current ballot
+      require(ballot.proposals[proposalUID].uid == proposalUID);
 
-      // remember the contribution
+      // remember total indivitual contribution
       balances[msg.sender] += amount;
 
       // update the total fund budget ever raised
       totalFundBudget += amount;
 
-      // remember 
+      // remember the last vote
+      ballot.votes[msg.sender] = proposalUID;
+
+      // remember the voter
+      ballot.voters.push(msg.sender);
    }
 
-
-
-
-
-   /**
-    * How much every individual participating parent has contributed.
-   **/
-   mapping (address => uint) public balances;
-
-   /**
-    * Total current budget of the fund.
-   **/
-   uint fundBudget;
-
-   /**
-    * Notification about another charity or expenditure.
-   **/
-   event Sent(address from, address to, uint amount, bytes256 message);
+   // at any moment we know the current winner
+   function getWinningProposal() public constant returns (bytes32 winningProposalUID)
+   {
+      // calculate votes
+      for (uint i = 0; i < ballot.voters.length; i++)
+         ballot.proposals[ballot.votes[ballot.voters[i]]].voteCount += balances[ballot.voters[i]];
    
-   
-
-
-   /**
-    * Donate - let anybody to give money for the charity fund.
-   **/
-   function Donate(uint amount)
-   {
-      // remember everyone's contribution
-      balances[msg.sender] += amount;
-
-      // add the money to the charity budget
-      balances[owner] += amount;
+      // find the biggest one
+      uint maxVotes = 0;
+      for (uint j = 0; j < ballot.UIDs.length; j++)
+         if (maxVotes < ballot.proposals[ballot.UIDs[j]].voteCount)
+         {
+            maxVotes = ballot.proposals[ballot.UIDs[j]].voteCount;
+            winningProposalUID = ballot.UIDs[j];
+         }
    }
-
-   /**
-    * Spend - use some money for an activity.
-   **/
-   function Spend(address to, uint amount, bytes256 message)
-   {
-      // charity fund has to have enough money to transfer
-      require(balances[owner] >= amount); 
-
-      // withdraw funds from charity account        
-      balances[owner] -= amount;
-
-      // send money somewhere here
-      // <to be updated>
-      
-      // notify
-      Sent(owner, to, amount, message)
-   }
-
-   /**
-    * Spending funds goes through an auction.
-    * See https://solidity.readthedocs.io/en/develop/solidity-by-example.html
-   **/
-   function SpendAuction(uint biddingTime, address beneficiary)
-   {
-      
-   }
-
-
-
 
 
 }
