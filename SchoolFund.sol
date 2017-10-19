@@ -35,12 +35,12 @@ contract Mortal
 contract SchoolCharityFund is Mortal
 {
    // all parents will be notified as soon as a new ballot is announced
-   event EventNewBallotAnnounced(bytes32[] proposalUIDs, bytes32[] descriptions, uint[] costs);
+   event EventNewBallotAnnounced(address[] beneficiaries, bytes32[] descriptions, uint[] costs);
 
    // Proposal on how to spend the money
    struct Proposal
    {
-      bytes32 uid; // globally unique ID of the proposal
+      address beneficiary; // globally unique ID of the proposal
       bytes32 description;
       uint cost;
       uint voteCount;
@@ -49,40 +49,47 @@ contract SchoolCharityFund is Mortal
    struct Ballot
    {
       // here is the list of all expenditure proposals
-      mapping(bytes32 => Proposal) proposals;
+      mapping(address => Proposal) proposals;
       
       // remember proposal UIDs (there is no way to get mapping keys otherwise)
-      bytes32[] UIDs;
+      address[] beneficiaries;
 
       // remember the votes
-      mapping(address => bytes32) votes;
+      mapping(address => address) votes;
 
       // remember voters (there is no way to get mapping keys otherwise)
       address[] voters;
+      
+      // will be set to 'now' automatically
+      uint ballotStart;
+      
+      // not used yet
+      uint biddingTime;
    }
 
    Ballot private ballot;
 
    // raise another ballot and notify the parents
-   function InitNewBallot(bytes32[] proposalUIDs, bytes32[] descriptions, uint[] costs) public
+   function InitNewBallot(address[] beneficiaries, bytes32[] descriptions, uint[] costs) public
    {
       // this is commented on purpose: any parent can raise the ballot, not only the School Fund owner
       // require(msg.sender == owner);
 
       Ballot storage newBallot;
+      newBallot.ballotStart = block.timestamp;
 
       // remember all proposals
-      for (uint i = 0; i < proposalUIDs.length; i++)
+      for (uint i = 0; i < beneficiaries.length; i++)
       {
-          newBallot.proposals[proposalUIDs[i]] = Proposal({uid: proposalUIDs[i], description: descriptions[i], cost: costs[i], voteCount: 0});
-          newBallot.UIDs.push(proposalUIDs[i]);
+          newBallot.proposals[beneficiaries[i]] = Proposal({beneficiary: beneficiaries[i], description: descriptions[i], cost: costs[i], voteCount: 0});
+          newBallot.beneficiaries.push(beneficiaries[i]);
       }      
 
       // replace old ballot
       ballot = newBallot;
 
       // notify all known parents about this new Ballot
-      EventNewBallotAnnounced(proposalUIDs, descriptions, costs);
+      EventNewBallotAnnounced(beneficiaries, descriptions, costs);
    }
 
 
@@ -94,26 +101,26 @@ contract SchoolCharityFund is Mortal
 
    // Every Parent can donate some funds an vote with the weight that is proportional to the total amount of money she ever contributed. 
    // It is possible to vote several times or even for various proposals within the same ballot. 
-   function DonateAndVote(bytes32 proposalUID, uint amount) public
+   function DonateAndVote(address beneficiary) public payable
    { 
       // verify that provided Proposal UID actually exists in the current ballot
-      require(ballot.proposals[proposalUID].uid == proposalUID);
+      require(ballot.proposals[beneficiary].beneficiary == beneficiary);
 
       // remember total indivitual contribution
-      balances[msg.sender] += amount;
+      balances[msg.sender] += msg.value;
 
       // update the total fund budget ever raised
-      totalFundBudget += amount;
+      totalFundBudget += msg.value;
 
       // remember the last vote
-      ballot.votes[msg.sender] = proposalUID;
+      ballot.votes[msg.sender] = beneficiary;
 
       // remember the voter
       ballot.voters.push(msg.sender);
    }
 
    // at any moment we know the current winner
-   function getWinningProposal() public constant returns (bytes32 winningProposalUID)
+   function getWinningProposal() public constant returns (address winningProposal)
    {
       // calculate votes
       for (uint i = 0; i < ballot.voters.length; i++)
@@ -121,11 +128,11 @@ contract SchoolCharityFund is Mortal
    
       // find the biggest one
       uint maxVotes = 0;
-      for (uint j = 0; j < ballot.UIDs.length; j++)
-         if (maxVotes < ballot.proposals[ballot.UIDs[j]].voteCount)
+      for (uint j = 0; j < ballot.beneficiaries.length; j++)
+         if (maxVotes < ballot.proposals[ballot.beneficiaries[j]].voteCount)
          {
-            maxVotes = ballot.proposals[ballot.UIDs[j]].voteCount;
-            winningProposalUID = ballot.UIDs[j];
+            maxVotes = ballot.proposals[ballot.beneficiaries[j]].voteCount;
+            winningProposal = ballot.beneficiaries[j];
          }
    }
 
